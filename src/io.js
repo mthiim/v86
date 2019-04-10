@@ -305,6 +305,9 @@ IO.prototype.mmap_write32_shim = function(addr, value)
 IO.prototype.mmap_register = function(addr, size, read_func8, write_func8, read_func32, write_func32)
 {
     dbg_log("mmap_register addr=" + h(addr >>> 0, 8) + " size=" + h(size, 8), LOG_IO);
+	if(this.cpu.accel) {
+		this.cpu.mx.unmap(addr, size);
+	}
 
     dbg_assert((addr & MMAP_BLOCK_SIZE - 1) === 0);
     dbg_assert(size && (size & MMAP_BLOCK_SIZE - 1) === 0);

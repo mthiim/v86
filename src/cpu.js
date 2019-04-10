@@ -3,7 +3,6 @@
 /** @const */
 var CPU_LOG_VERBOSE = false;
 
-
 // Resources:
 // https://pdos.csail.mit.edu/6.828/2006/readings/i386/toc.htm
 // https://www-ssl.intel.com/content/www/us/en/processors/architectures-software-developer-manuals.html
@@ -28,6 +27,10 @@ var
 /** @constructor */
 function CPU(bus)
 {
+	if(typeof StartMachine === "function") {
+		this.accel = true;
+	}
+
     /** @type {number} */
     this.memory_size = 0;
 
@@ -36,6 +39,9 @@ function CPU(bus)
     this.a20_enabled = true;
 
     this.mem_page_infos = undefined;
+	
+	/** @type {MX|undefined}*/
+	this.mx = undefined;
 
     this.mem8 = new Uint8Array(0);
     this.mem16 = new Uint16Array(this.mem8.buffer);
@@ -259,7 +265,9 @@ function CPU(bus)
     /** @type {number} */
     this.fw_value = 0;
 
+    /** @type {IO|undefined} */
     this.io = undefined;
+	
     this.fpu = undefined;
 
     this.bus = bus;
@@ -452,7 +460,7 @@ CPU.prototype.set_state = function(state)
  */
 CPU.prototype.main_run = function()
 {
-    if(this.in_hlt)
+    if(this.in_hlt && !this.interruptpending)
     {
         //if(false)
         //{
@@ -464,7 +472,7 @@ CPU.prototype.main_run = function()
             var t = this.hlt_loop();
         //}
 
-        if(this.in_hlt)
+        if(this.in_hlt && !this.interruptpending)
         {
             return t;
         }
@@ -600,6 +608,47 @@ CPU.prototype.reset = function()
     this.fw_value = 0;
 };
 
+CPU.prototype.memorycallbackw1 = function()
+{
+	var addr = this.uint32params[0];
+	var data = this.uint32params[1];
+	this.write8(addr, data);	
+};
+
+CPU.prototype.memorycallbackw2 = function()
+{
+	var addr = this.uint32params[0];
+	var data = this.uint32params[1];
+	this.write16(addr, data);	
+};
+
+CPU.prototype.memorycallbackw4 = function()
+{
+	var addr = this.uint32params[0];
+	var data = this.uint32params[1];
+	this.write32(addr, data);	
+};
+
+CPU.prototype.memorycallbackr1 = function()
+{
+	var addr = this.uint32params[0];
+	this.uint32params[0] = this.read8(addr);
+}
+
+CPU.prototype.memorycallbackr2 = function()
+{
+	var addr = this.uint32params[0];
+	this.uint32params[0] = this.read16(addr);
+}
+
+CPU.prototype.memorycallbackr4 = function()
+{
+	var addr = this.uint32params[0];
+	this.uint32params[0] = this.read32s(addr);
+}
+
+
+
 /** @export */
 CPU.prototype.create_memory = function(size)
 {
@@ -618,7 +667,67 @@ CPU.prototype.create_memory = function(size)
 
     this.memory_size = size;
 
-    var buffer = new ArrayBuffer(size);
+    var buffer;
+	if(this.accel) {
+		this.mx = StartMachine(size, this, this.memorycallbackw1, this.memorycallbackw2, this.memorycallbackw4, this.memorycallbackr1, this.memorycallbackr2, this.memorycallbackr4);				
+		this.mx.cpu = this;
+		this.uint32params = new Uint32Array(this.mx.parambuf);
+		this.mx.uint32params = this.uint32params;
+		
+		var t = this;
+		this.mx.iocallback = function() {			
+			var arr  = t.mx.uint32params;
+
+			var port = arr[0];
+			var access_size = arr[1];
+			var direction = arr[2];
+
+			if(direction == 0) {
+
+				//alert("READ: Port=" + port + ", access_size=" + access_size + ", direction=" + direction);
+				if(access_size == 1) {
+					arr[0] = t.io.port_read8(port);
+					return;
+				}
+				else if(access_size == 2) {
+					arr[0] = t.io.port_read16(port);
+					return;
+				}
+				else if(access_size == 4) {
+					arr[0] = t.io.port_read32(port);
+					return;
+				}
+			}
+			else {
+				//alert("WRITE: Port=" + port + ", access_size=" + access_size + ", direction=" + direction + ", data=" + data);
+
+				if(access_size == 1) {
+					t.io.port_write8(port, arr[3]);
+				}
+				else if(access_size == 2) {
+					t.io.port_write16(port, arr[3]);
+				}
+				else if(access_size == 4) {
+					t.io.port_write32(port, arr[3]);
+				}
+			}
+		};
+
+		
+		this.mx.cpuid = function(rax,rbx,rcx,rdx) {
+			t.reg32s[reg_eax] = rax;
+			t.reg32s[reg_ebx] = rbx;
+			t.reg32s[reg_ecx] = rcx;
+			t.reg32s[reg_edx] = rdx;
+			t.cpuid();
+			return [t.reg32s[reg_eax], t.reg32s[reg_ebx], t.reg32s[reg_ecx], t.reg32s[reg_edx]];
+		};
+
+		buffer = this.mx.memory;	
+	}
+	else {
+		buffer = new ArrayBuffer(size);
+	}
 
     this.mem8 = new Uint8Array(buffer);
     this.mem16 = new Uint16Array(buffer);
@@ -1069,6 +1178,7 @@ CPU.prototype.load_bios = function()
     }
 
     // seabios expects the bios to be mapped to 0xFFF00000 also
+	// TODO: Should callback into machine
     this.io.mmap_register(0xFFF00000, 0x100000,
         function(addr)
         {
@@ -1080,6 +1190,7 @@ CPU.prototype.load_bios = function()
             addr &= 0xFFFFF;
             this.mem8[addr] = value;
         }.bind(this));
+		
 };
 
 CPU.prototype.do_run = function()
@@ -1111,7 +1222,25 @@ CPU.prototype.do_run = function()
 CPU.prototype.do_many_cycles = function()
 {
     try {
-        this.do_many_cycles_unsafe();
+		if(this.accel) {
+			this.flags = this.mx.run();
+			
+			
+			
+			var mask = ~((1 << 22) | (1 << 23));
+			this.interruptpending = ((this.flags >> 22) & 1);
+			this.halted = ((this.flags >> 23) & 1);
+			this.in_hlt = (this.halted == 1);
+			if(this.in_hlt) {
+				dbg_log("CPU is halted...");
+			}
+			this.flags = this.flags & mask;
+
+			dbg_log("Exiting with flags: " + this.flags + " " + (this.flags & flag_interrupt) + this.interruptpending);
+		}
+		else {
+			this.do_many_cycles_unsafe();
+		}
     }
     catch(e)
     {
@@ -1176,6 +1305,9 @@ if(PROFILING)
  */
 CPU.prototype.cycle_internal = function()
 {
+	if(this.accel) {
+		dbg_log("ERROR!!!! EMULATION BREAKING!!!!");
+	}
     this.previous_ip = this.instruction_pointer;
 
     this.timestamp_counter++;
@@ -3692,10 +3824,20 @@ CPU.prototype.write_xmm128s = function(d0, d1, d2, d3)
 
 CPU.prototype.pic_call_irq = function(int)
 {
+	dbg_log("RAISED IRQ: " + int);
     try
     {
-        this.previous_ip = this.instruction_pointer;
-        this.call_interrupt_vector(int, false, false);
+		if(this.accel) {
+			dbg_log("PIC CALL IRQ - Flags: " + this.flags + " " + (this.flags & flag_interrupt ? "Int on" : "Int off"));
+			dbg_log("Accel IRQ start: " + int);
+			this.mx.irq(int);
+			dbg_log("Accel IRQ end: " + int);
+			this.interruptpending = 1;
+		}
+		else {
+			this.previous_ip = this.instruction_pointer;
+			this.call_interrupt_vector(int, false, false);
+		}	
     }
     catch(e)
     {
@@ -3707,24 +3849,26 @@ CPU.prototype.handle_irqs = function()
 {
     dbg_assert(!this.page_fault);
 
-    this.diverged();
+		this.diverged();
+		dbg_log("Flags: " + this.flags + " " + (this.flags & flag_interrupt ? "Int on" : "Int off"));
+		if((this.flags & flag_interrupt) && !this.interruptpending && !this.page_fault)
+		{
+			dbg_log("Ackowledge IRQ - Flags: " + this.flags + " " + (this.flags & flag_interrupt ? "Int on" : "Int off"));
+			if(this.devices.pic)
+			{
+				this.devices.pic.acknowledge_irq();
+			}
 
-    if((this.flags & flag_interrupt) && !this.page_fault)
-    {
-        if(this.devices.pic)
-        {
-            this.devices.pic.acknowledge_irq();
-        }
-
-        if(this.devices.apic)
-        {
-            this.devices.apic.acknowledge_irq();
-        }
-    }
+			if(this.devices.apic)
+			{
+				this.devices.apic.acknowledge_irq();
+			}
+		}
 };
 
 CPU.prototype.device_raise_irq = function(i)
 {
+	dbg_log("Device raise irql: " + i);
     dbg_assert(arguments.length === 1);
     if(this.devices.pic)
     {
@@ -3739,6 +3883,7 @@ CPU.prototype.device_raise_irq = function(i)
 
 CPU.prototype.device_lower_irq = function(i)
 {
+	dbg_log("Device lower irql: " + i);
     if(this.devices.pic)
     {
         this.devices.pic.clear_irq(i);

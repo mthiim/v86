@@ -95,6 +95,7 @@ build/v86_all.js: $(CLOSURE) src/*.js src/browser/*.js lib/*.js
 	mkdir -p build
 	-ls -lh build/v86_all.js
 	java -jar $(CLOSURE) \
+		--externs extern.js \
 		--js_output_file build/v86_all.js\
 		--define=DEBUG=false\
 		--define=ENABLE_ACPI=$(ACPI)\
@@ -116,6 +117,7 @@ build/libv86.js: $(CLOSURE) src/*.js lib/*.js src/browser/*.js
 	mkdir -p build
 	-ls -lh build/libv86.js
 	java -jar $(CLOSURE) \
+		--externs extern.js \
 		--js_output_file build/libv86.js\
 		--define=DEBUG=false\
 		--define=ENABLE_ACPI=$(ACPI)\
