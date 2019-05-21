@@ -121,6 +121,9 @@ function V86Starter(options)
     settings.fastboot = options["fastboot"] || false;
     settings.fda = undefined;
     settings.fdb = undefined;
+    settings.uart1 = options["uart1"] || false;
+    settings.uart2 = options["uart2"] || false;
+    settings.uart3 = options["uart3"] || false;
 
     if(options["network_relay_url"])
     {
@@ -824,6 +827,20 @@ V86Starter.prototype.serial0_send = function(data)
     for(var i = 0; i < data.length; i++)
     {
         this.bus.send("serial0-input", data.charCodeAt(i));
+    }
+};
+
+/**
+ * Send bytes to a serial port (to be received by the emulated PC).
+ *
+ * @param {Uint8Array} data
+ * @export
+ */
+V86Starter.prototype.serial_send_bytes = function(serial, data)
+{
+    for(var i = 0; i < data.length; i++)
+    {
+        this.bus.send("serial" + serial + "-input", data[i]);
     }
 };
 

@@ -187,7 +187,6 @@ function CPU(bus)
     /** @type {number} */
     this.last_result = 0;
 
-    this.mul32_result = new Int32Array(2);
     this.div32_result = new Float64Array(2);
 
     this.tsc_offset = 0;
@@ -341,7 +340,7 @@ CPU.prototype.get_state = function()
     state[51] = this.devices.hpet;
     state[52] = this.devices.vga;
     state[53] = this.devices.ps2;
-    state[54] = this.devices.uart;
+    state[54] = this.devices.uart0;
     state[55] = this.devices.fdc;
     state[56] = this.devices.cdrom;
     state[57] = this.devices.hda;
@@ -358,6 +357,10 @@ CPU.prototype.get_state = function()
     state[65] = this.tss_size_32;
 
     state[66] = this.reg_mmxs;
+
+    state[67] = this.devices.uart1;
+    state[68] = this.devices.uart2;
+    state[69] = this.devices.uart3;
 
     return state;
 };
@@ -417,7 +420,7 @@ CPU.prototype.set_state = function(state)
     this.devices.hpet = state[51];
     this.devices.vga = state[52];
     this.devices.ps2 = state[53];
-    this.devices.uart = state[54];
+    this.devices.uart0 = state[54];
     this.devices.fdc = state[55];
     this.devices.cdrom = state[56];
     this.devices.hda = state[57];
@@ -434,6 +437,10 @@ CPU.prototype.set_state = function(state)
     this.tss_size_32 = state[65];
 
     this.reg_mmxs = state[66];
+
+    this.devices.uart1 = state[67];
+    this.devices.uart2 = state[68];
+    this.devices.uart3 = state[69];
 
     this.mem16 = new Uint16Array(this.mem8.buffer, this.mem8.byteOffset, this.mem8.length >> 1);
     this.mem32s = new Int32Array(this.mem8.buffer, this.mem8.byteOffset, this.mem8.length >> 2);
@@ -841,7 +848,20 @@ CPU.prototype.init = function(settings, device_bus)
 
         this.devices.ps2 = new PS2(this, device_bus);
 
-        this.devices.uart = new UART(this, 0x3F8, device_bus);
+        this.devices.uart0 = new UART(this, 0x3F8, device_bus);
+
+        if(settings.uart1)
+        {
+            this.devices.uart1 = new UART(this, 0x2F8, device_bus);
+        }
+        if(settings.uart2)
+        {
+            this.devices.uart2 = new UART(this, 0x3E8, device_bus);
+        }
+        if(settings.uart3)
+        {
+            this.devices.uart3 = new UART(this, 0x3E8, device_bus);
+        }
 
         this.devices.fdc = new FloppyController(this, settings.fda, settings.fdb);
 
